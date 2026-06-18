@@ -1,0 +1,710 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Comptage GPS">
+<title>Comptage GPS Eugénie</title>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
+
+<style>
+* { box-sizing: border-box; }
+body {
+  margin:0;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
+  background:#f6f7f8;
+  color:#111827;
+  padding:12px;
+  padding-bottom:28px;
+}
+h1 { text-align:center; font-size:23px; margin:6px 0 10px; }
+.card,.counter {
+  background:#fff;
+  border:1px solid #d1d5db;
+  border-radius:18px;
+  padding:12px;
+  margin-bottom:12px;
+  box-shadow:0 1px 4px rgba(0,0,0,.06);
+}
+label { display:block; font-weight:800; margin-bottom:6px; font-size:15px; }
+select,input,textarea {
+  width:100%;
+  font-size:17px;
+  padding:12px;
+  border:1px solid #d1d5db;
+  border-radius:14px;
+  background:#fff;
+}
+textarea { min-height:62px; resize:vertical; }
+.small { color:#6b7280; font-size:13px; margin-top:6px; line-height:1.35; }
+.status {
+  padding:10px;
+  border-radius:14px;
+  background:#f3f4f6;
+  font-size:14px;
+  font-weight:700;
+  line-height:1.35;
+}
+.status.ok { background:#dcfce7; color:#14532d; }
+.status.warn { background:#fef3c7; color:#78350f; }
+.status.err { background:#fee2e2; color:#7f1d1d; }
+
+#map {
+  height: 42vh;
+  min-height:310px;
+  width:100%;
+  border-radius:18px;
+  border:1px solid #d1d5db;
+  overflow:hidden;
+}
+.map-actions { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:10px; }
+button {
+  border:0;
+  border-radius:16px;
+  font-size:18px;
+  font-weight:900;
+  min-height:58px;
+  background:#111827;
+  color:white;
+  touch-action:manipulation;
+}
+button.secondary { background:#4b5563; }
+button.save { background:#1d4ed8; }
+button.export { background:#166534; }
+button.reset { background:#b91c1c; }
+button.info { background:#0369a1; }
+button.minus { background:#374151; font-size:30px; }
+button.plus { font-size:30px; }
+
+.counter-title { font-weight:900; font-size:18px; margin-bottom:9px; display:flex; align-items:center; gap:8px; }
+.dot { width:14px; height:14px; border-radius:50%; display:inline-block; border:1px solid rgba(0,0,0,.2); }
+.counter-row { display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; align-items:center; }
+.value {
+  text-align:center;
+  font-size:38px;
+  font-weight:900;
+  line-height:68px;
+  background:#f3f4f6;
+  border-radius:16px;
+  min-height:68px;
+}
+.grid2 { display:grid; grid-template-columns:1fr; gap:10px; }
+.check-grid { display:grid; grid-template-columns:1fr; gap:7px; }
+.check-item {
+  display:flex; align-items:center; gap:10px;
+  background:#f9fafb; border:1px solid #d1d5db; border-radius:14px; padding:10px; font-weight:800;
+}
+.check-item input { width:22px; height:22px; padding:0; }
+
+.saved-list {
+  max-height:260px;
+  overflow:auto;
+  border:1px solid #d1d5db;
+  border-radius:14px;
+  background:#f9fafb;
+  padding:8px;
+}
+.saved-item {
+  background:#fff;
+  border:1px solid #e5e7eb;
+  border-radius:12px;
+  padding:9px;
+  margin-bottom:8px;
+  font-size:13px;
+}
+.actions {
+  display:grid;
+  grid-template-columns:1fr;
+  gap:10px;
+  position:sticky;
+  bottom:10px;
+  z-index:800;
+}
+.leaflet-popup-content { font-size:14px; }
+@media (min-width:900px) {
+  body { max-width:1180px; margin:auto; }
+  .layout { display:grid; grid-template-columns: 0.95fr 1.05fr; gap:12px; align-items:start; }
+  #map { height: 72vh; min-height:620px; position:sticky; top:10px; }
+  .grid2 { grid-template-columns:1fr 1fr; }
+  .actions { position:static; }
+}
+</style>
+</head>
+<body>
+<h1>Comptage vigne GPS — Eugénie</h1>
+
+<div class="layout">
+  <div>
+    <div class="card">
+      <label for="parcelle">Parcelle comptée — label</label>
+      <select id="parcelle"></select>
+      <div class="small">La parcelle choisie est prioritaire : tous les points sont rattachés à cette parcelle. Si le GPS tombe à côté, le point est forcé sur son contour.</div>
+    </div>
+
+    <div class="grid2">
+      <div class="card">
+        <label for="rang">Rang / secteur</label>
+        <input id="rang" type="text" placeholder="Ex : rang 8, zone nord...">
+      </div>
+      <div class="card">
+        <label for="operateur">Opérateur</label>
+        <input id="operateur" type="text" placeholder="Optionnel">
+      </div>
+    </div>
+
+    <div class="card">
+      <label>État GPS</label>
+      <div id="gpsStatus" class="status warn">GPS non activé. Clique sur “Activer GPS”.</div>
+      <div class="map-actions">
+        <button type="button" class="info" onclick="startGpsWatch()">Activer GPS</button>
+        <button type="button" class="secondary" onclick="centerOnSelectedParcel()">Centrer parcelle</button>
+      </div>
+      <div class="small">À chaque clic “+”, l’application enregistre un point géolocalisé. Si le signal est absent, un point de secours est placé au centre de la parcelle avec le statut GPS “erreur”.</div>
+    </div>
+
+    <div class="card">
+      <label>Compteurs à afficher</label>
+      <div id="checks" class="check-grid"></div>
+      <button type="button" class="secondary" onclick="showAllCounters()">Tout afficher</button>
+    </div>
+
+    <div id="counters"></div>
+
+    <div class="card">
+      <label for="commentaire">Commentaire général</label>
+      <textarea id="commentaire" placeholder="Optionnel"></textarea>
+    </div>
+
+    <div class="card">
+      <label>Observations enregistrées</label>
+      <div class="small" id="savedSummary">Aucune observation.</div>
+      <div class="saved-list" id="savedList"></div>
+      <div class="map-actions">
+        <button type="button" class="secondary" onclick="deleteLastObservation()">Supprimer dernier point</button>
+        <button type="button" class="reset" onclick="clearAllObservations()">Tout effacer</button>
+      </div>
+      <button type="button" class="secondary" onclick="resetCurrentParcel()" style="width:100%;margin-top:10px;">Remettre à zéro les compteurs de la parcelle</button>
+    </div>
+
+    <div class="actions">
+      <button type="button" class="export" onclick="exportCSV()">Exporter CSV points</button>
+      <button type="button" class="export" onclick="exportGeoJSON()">Exporter GeoJSON QGIS</button>
+      <button type="button" class="info" onclick="exportSummaryCSV()">Exporter synthèse parcelle</button>
+    </div>
+  </div>
+
+  <div>
+    <div id="map"></div>
+  </div>
+</div>
+
+<script>
+const PARCELLAIRE = {"type":"FeatureCollection","name":"Parcellaire Eugénie - regroupé par label","crs":{"type":"name","properties":{"name":"urn:ogc:def:crs:OGC:1.3:CRS84"}},"features":[{"type":"Feature","properties":{"label":"Brulées_3_ouvrées","labelFile":"3 OUVREE","ids_sources":"273203","nb_polygones_sources":1},"geometry":{"type":"MultiPolygon","coordinates":[[[[4.947437014651658,47.1660194435178],[4.947445967881224,47.1659872579454],[4.947043312117685,47.16596223570929],[4.946542161434118,47.16593112955633],[4.946488808453305,47.1659253841776],[4.946317734126115,47.16590910293985],[4.946287623841997,47.16600595355612],[4.94643957,47.16603269],[4.946459661134591,47.166029931449685],[4.946722226570012,47.16605860718212],[4.94676876,47.16606182000001],[4.94681313,47.16605809999999],[4.94683869,47.16605668],[4.94696556,47.16607031],[4.947078866679385,47.16607294663942],[4.947141060152351,47.16609320710427],[4.947175285352051,47.166110784903594],[4.947289915814348,47.16617597983742],[4.947334977897897,47.166180882069085],[4.947409168510588,47.16616665761191],[4.947414161838516,47.16611428832692],[4.947437014651658,47.1660194435178]]]]}},{"type":"Feature","properties":{"label":"Batard_Montrachet","labelFile":"BATARD MONTRACHET","ids_sources":"273205","nb_polygones_sources":1},"geometry":{"type":"MultiPolygon","coordinates":[[[[4.737939078707002,46.94160070344901],[4.738002710832959,46.941585439264884],[4.738233161926074,46.94183671152314],[4.738480811001001,46.94211498834076],[4.738434376856858,46.942138471549555],[4.737939078707002,46.94160070344901]]]]}},{"type":"Feature","properties":{"label":"BGO","labelFile":"BGO","ids_sources":"273207","nb_polygones_sources":1},"geometry":{"type":"MultiPolygon","coordinates":[[[[4.964600017835487,47.15303408019457],[4.964504962558069,47.152520176820985],[4.964105730320393,47.15149558704482],[4.964172269087107,47.151450336771546],[4.964585759398831,47.15255573000036],[4.9646855673676,47.15302438397376],[4.964600017835487,47.15303408019457]]]]}},{"type":"Feature","properties":{"label":"Bonnes_Mares_Bouchard","labelFile":"BONNES MARES | BONNES MARES 1972","ids_sources":"273209, 273211","nb_polygones_sources":2},"geometry":{"type":"MultiPolygon","coordinates":[[[[4.957726435251127,47.191544021077306],[4.957706777902311,47.19152064400305],[4.958308793395809,47.19134030588117],[4.958318622070217,47.19136535287214],[4.957726435251127,47.191544021077306]]],[[[4.956771066085046,47.19191699732826],[4.956755730097629,47.19186697419738],[4.958332269650857,47.19137299276102],[4.958326135349493,47.19134172795944],[4.958642056783878,47.19124793344423],[4.958703400733545,47.19135631821837],[4.956771066085046,47.19191699732826]]]]}},{"type":"Feature","properties":{"label":"Bonnes_Mares_Plante_2019","labelFile":"BONNES MARES 2019","ids_sources":"273213","nb_polygones_sources":1},"geometry":{"type":"MultiPolygon","coordinates":[[[[4.9558906169832,47.19216884860799],[4.955978256836993,47.192110948052914],[4.956655030004667,47.191890925380505],[4.956676939968117,47.19193724588274],[4.9558906169832,47.19216884860799]]]]}},{"type":"Feature","properties":{"label":"Chambertin","labelFile":"CHAMBERTIN","ids_sources":"273215","nb_polygones_sources":1},"geometry":{"type":"MultiPolygon","coordinates":[[[[4.962744344120107,47.20981627902009],[4.962673457756596,47.209538757615405],[4.96296446525521,47.20949567200233],[4.963206971527776,47.20950834425366],[4.96327039613136,47.20971236706362],[4.962744344120107,47.20981627902009]]]]}},{"type":"Feature","properties":{"label":"Chambolle_Musigny","labelFile":"CHAMBOLLE-MUSIGNY","ids_sources":"273217","nb_polygones_sources":1},"geometry":{"type":"MultiPolygon","coordinates":[[[[4.963116251359789,47.18609380945307],[4.963512777060198,47.18618091604728],[4.963733069082028,47.18618091604728],[4.962821175660097,47.184563232162134],[4.962533532511205,47.18494049916481],[4.963116251359789,47.18609380945307]]]]}},{"type":"Feature","properties":{"label":"Chassagne_Montrachet","labelFile":"CHASSAGNE MONTRACHET | CHASSAGNE MONTRACHET POINTE","ids_sources":"273219, 273221","nb_polygones_sources":2},"geometry":{"type":"MultiPolygon","coordinates":[[[[4.741981258007613,46.938594573452235],[4.741319714575106,46.93774923570851],[4.741561483404723,46.93768574413795],[4.741867015493383,46.9381265555443],[4.741808565957501,46.93815558007418],[4.742108784525698,46.93855285117033],[4.741981258007613,46.938594573452235]]],[[[4.741837100177531,46.93815473238982],[4.741919110503878,46.93814444750902],[4.742195267511566,46.93852270221399],[4.742133341417134,46.93854784292523],[4.741837100177531,46.93815473238982]]]]}},{"type":"Feature","properties":{"label":"Clos_d_Eugénie","labelFile":"CLOS EUGENIE","ids_sources":"273223","nb_polygones_sources":1},"geometry":{"type":"MultiPolygon","coordinates":[[[[4.952444002438964,47.15973488191841],[4.952339291539586,47.159219301554714],[4.952700363416419,47.15918492940875],[4.952722027673934,47.159319962932074],[4.953079488887093,47.15926840466204],[4.953075877947945,47.15914564680861],[4.953426118109233,47.15911863989297],[4.953519996466639,47.159437810071466],[4.953303353340539,47.15949918869609],[4.953350292794718,47.15965386249701],[4.953006517280403,47.15971736813938],[4.952987548987608,47.15967150996991],[4.952444002438964,47.15973488191841]]]]}},{"type":"Feature","properties":{"label":"Clos_Vougeot","labelFile":"CLOS VOUGEOT","ids_sources":"273225","nb_polygones_sources":1},"geometry":{"type":"MultiPolygon","coordinates":[[[[4.955327965156679,47.173015273291355],[4.955204129774251,47.17239481892193],[4.957566177351521,47.17218280274187],[4.957699186295485,47.172821966668295],[4.955327965156679,47.173015273291355]]]]}},{"type":"Feature","properties":{"label":"Clos_Vougeot_Bouchard","labelFile":"CLOS VOUGEOT BOUCHARD","ids_sources":"273227","nb_polygones_sources":1},"geometry":{"type":"MultiPolygon","coordinates":[[[[4.954158407445156,47.173130633369794],[4.955254581213391,47.173043333915814],[4.955208716205096,47.17283132020586],[4.954328107835878,47.17291550220742],[4.954158407445156,47.173130633369794]]]]}},{"type":"Feature","properties":{"label":"Corton Charlemagne","labelFile":"Corton Charlemagne","ids_sources":"273229","nb_polygones_sources":1},"geometry":{"type":"MultiPolygon","coordinates":[[[[4.863526161582886,47.07613075976528],[4.863699680232695,47.07599008016365],[4.865356370198741,47.07702547333926],[4.865067172449058,47.07727587790674],[4.864228498974975,47.0766991015748],[4.863526161582886,47.07613075976528]]]]}},{"type":"Feature","properties":{"label":"Echezeaux","labelFile":"ECHEZEAUX","ids_sources":"273230","nb_polygones_sources":1},"geometry":{"type":"MultiPolygon","coordinates":[[[[4.947893049274276,47.173621727074334],[4.947901012983011,47.17288820105486],[4.947980648247652,47.17287737419278],[4.947910279338406,47.172280657719284],[4.948236365313672,47.17223973348467],[4.948457568570625,47.1736241236739],[4.947893049274276,47.173621727074334]]]]}},{"type":"Feature","properties":{"label":"Echezeaux_Bouchard","labelFile":"ECHEZEAUX bouchard","ids_sources":"273232","nb_polygones_sources":2},"geometry":{"type":"MultiPolygon","coordinates":[[[[4.948042007437832,47.17474226804637],[4.948125077506679,47.174340716303135],[4.948609652086736,47.17436267614815],[4.948605037161155,47.17444110443387],[4.948503507037885,47.17445051591611],[4.948383517212291,47.1748018730562],[4.948042007437832,47.17474226804637]]],[[[4.94867887737884,47.17445051591608],[4.948711182210005,47.17363799335641],[4.948858862293281,47.17361289584227],[4.948955777138872,47.17448502427112],[4.94867887737884,47.17445051591608]]]]}},{"type":"Feature","properties":{"label":"Cazetiers_Bouchard","labelFile":"GEVREY CHAMBERTIN 1ER CRU LES CAZETIERS","ids_sources":"273234","nb_polygones_sources":1},"geometry":{"type":"MultiPolygon","coordinates":[[[[4.960366934515497,47.230458182650835],[4.960282124164656,47.230338887265816],[4.960445687512343,47.23026072808034],[4.960429184259238,47.23023359046698],[4.960612463758167,47.23015321210835],[4.960744196093753,47.23029711517506],[4.960366934515497,47.230458182650835]]]]}},{"type":"Feature","properties":{"label":"Cazetiers_Plante_18","labelFile":"GEVREY CHAMBERTIN LER CRU LES CAZETIERS 2018","ids_sources":"273236","nb_polygones_sources":1},"geometry":{"type":"MultiPolygon","coordinates":[[[[4.960457821685496,47.230583623765426],[4.960387456286628,47.23049002555254],[4.960843562371894,47.230304811091656],[4.960929934578735,47.23039330251024],[4.960457821685496,47.230583623765426]]]]}},{"type":"Feature","properties":{"label":"Cazetiers_Vieilles_Vignes","labelFile":"GEVREY CHAMBERTIN LER CRU LES CAZETIERS V.V","ids_sources":"273238","nb_polygones_sources":1},"geometry":{"type":"MultiPolygon","coordinates":[[[[4.961063281261321,47.230338767155985],[4.96094357232603,47.230231754114214],[4.961413316158589,47.23004345179112],[4.961486050733747,47.230104161361936],[4.961589091362614,47.23005374155113],[4.961637581002313,47.23008358185953],[4.961720922650025,47.230050654670436],[4.961528479255187,47.23015458112474],[4.961063281261321,47.230338767155985]]]]}},{"type":"Feature","properties":{"label":"Grands_Echezeaux","labelFile":"GRANDS-ECHEZEAUX | Grands-Echzeaux","ids_sources":"273240, 273242","nb_polygones_sources":3},"geometry":{"type":"MultiPolygon","coordinates":[[[[4.953316376418591,47.169289149061655],[4.953271221975445,47.16916871969565],[4.953882545766878,47.16908371048754],[4.953910333320351,47.16923011507521],[4.953316376418591,47.169289149061655]]],[[[4.953945067629696,47.16923011507521],[4.953913806698287,47.16908371048754],[4.955473376975776,47.16886174155334],[4.955501164529251,47.16906009680949],[4.953945067629696,47.16923011507521]]],[[[4.952316028468518,47.16942846904567],[4.952274347138307,47.16931276263787],[4.953236487666101,47.169173442440496],[4.953278168731313,47.16930095585104],[4.952316028468518,47.16942846904567]]]]}},{"type":"Feature","properties":{"label":"Le Corton","labelFile":"Le Corton","ids_sources":"273244","nb_polygones_sources":1},"geometry":{"type":"MultiPolygon","coordinates":[[[[4.865780701717584,47.076318759233544],[4.866154184394031,47.07657025127938],[4.866909542616058,47.07609870271975],[4.8671193643444,47.076050118691626],[4.867291418161639,47.07594437683031],[4.867257846685105,47.0758957926615],[4.867178114428334,47.07589865055502],[4.866699720887717,47.07569288183058],[4.865780701717584,47.076318759233544]]]]}},{"type":"Feature","properties":{"label":"Meursault_Les_Porusots","labelFile":"MEURSAULT 1ER CRU PORUZOT | MEURSAULT POINTE","ids_sources":"273245, 273247","nb_polygones_sources":2},"geometry":{"type":"MultiPolygon","coordinates":[[[[4.760875425730793,46.96860841940597],[4.760839946686621,46.96847578553161],[4.7612656960405,46.968492627967606],[4.761187025101117,46.96859368231168],[4.760875425730793,46.96860841940597]]],[[[4.760998831347435,46.96876631641794],[4.760943298961172,46.96872105262338],[4.760883138581834,46.96861684058368],[4.761142290423858,46.968610524670396],[4.761091385559917,46.9686884206009],[4.760998831347435,46.96876631641794]]]]}},{"type":"Feature","properties":{"label":"Montrachet","labelFile":"MONTRACHET","ids_sources":"273249","nb_polygones_sources":1},"geometry":{"type":"MultiPolygon","coordinates":[[[[4.736804393911172,46.94303560852029],[4.736872913181548,46.943022027363355],[4.736941432451926,46.94313671333521],[4.737164672731567,46.943444553440514],[4.737087312226934,46.94347775179273],[4.736804393911172,46.94303560852029]]]]}},{"type":"Feature","properties":{"label":"Cailles","labelFile":"NUITS-SAINT-GEORGES 1ER CRU LES CAILLES","ids_sources":"273251","nb_polygones_sources":1},"geometry":{"type":"MultiPolygon","coordinates":[[[[4.937207138147853,47.12401818411848],[4.936783853591845,47.12360544571982],[4.936763855942337,47.12349432306985],[4.939163580494678,47.12287747614653],[4.939326894844229,47.1231133300941],[4.938523653930436,47.12333784435998],[4.938636974029075,47.1235555540224],[4.937207138147853,47.12401818411848]]]]}},{"type":"Feature","properties":{"label":"Brulées_Plante_1","labelFile":"PLANTE 1A | PLANTE 1B","ids_sources":"273253, 273255","nb_polygones_sources":2},"geometry":{"type":"MultiPolygon","coordinates":[[[[4.943827044947513,47.16551433513331],[4.94406697329565,47.165458085817534],[4.94418831602969,47.16544683590433],[4.944353783623821,47.16546558568683],[4.944328963653025,47.16557995925973],[4.943827044947513,47.16551433513331]]],[[[4.94435654158538,47.16557995925973],[4.944373088092309,47.16545058587565],[4.944425486416268,47.16544871092577],[4.94448891532404,47.16543183608786],[4.944635078449685,47.16545058587565],[4.944615773981197,47.16561183382052],[4.94435654158538,47.16557995925973]]]]}},{"type":"Feature","properties":{"label":"Brulées_Plante_2023","labelFile":"PLANTE 2023 92 | PLANTE 2023 99","ids_sources":"273257, 273259","nb_polygones_sources":2},"geometry":{"type":"MultiPolygon","coordinates":[[[[4.944436286923349,47.16603137149818],[4.944384159439328,47.16567883357885],[4.945983648932427,47.1658709577176],[4.945978161916979,47.16597168268137],[4.945736729469573,47.16593624246576],[4.945358119542805,47.16597541324768],[4.94533891477942,47.16600898819081],[4.944436286923349,47.16603137149818]]],[[[4.943808014026003,47.16590080215542],[4.943783322142512,47.165867227143906],[4.943838193134257,47.16561354851433],[4.944348493420283,47.16568069883678],[4.944370441691391,47.165939972963486],[4.944175649712559,47.165951164668456],[4.943808014026003,47.16590080215542]]]]}},{"type":"Feature","properties":{"label":"Vigneux","labelFile":"VIGNEUX","ids_sources":"273261","nb_polygones_sources":1},"geometry":{"type":"MultiPolygon","coordinates":[[[[4.955903526380057,47.16350902206227],[4.955710409755597,47.163217531687025],[4.957261136161611,47.16307966404156],[4.957284310392284,47.16331732135859],[4.955903526380057,47.16350902206227]]]]}},{"type":"Feature","properties":{"label":"Brulées_Plante_2","labelFile":"VOSNE ROMANEE 1ER AUX BRULEE PLANTE 2012","ids_sources":"273263","nb_polygones_sources":1},"geometry":{"type":"MultiPolygon","coordinates":[[[[4.945400744163504,47.1660363720967],[4.945400744163504,47.1659873233329],[4.94571265877643,47.1659772251123],[4.94575297447325,47.16595414337928],[4.946166738841601,47.166011847747995],[4.946156129498823,47.166130141518806],[4.945926967630059,47.166058011208776],[4.945727511791565,47.16603204422924],[4.945400744163504,47.1660363720967]]]]}},{"type":"Feature","properties":{"label":"Brulées_Haut","labelFile":"VOSNE-ROMANEE 1ER AUX BRULEES 1951","ids_sources":"273265","nb_polygones_sources":1},"geometry":{"type":"MultiPolygon","coordinates":[[[[4.944594901685478,47.16646288018367],[4.944562214143247,47.16641543451385],[4.94449589215165,47.166392248142444],[4.944378398682614,47.16639209112412],[4.944329121019445,47.16638444956379],[4.944424804830652,47.166058478419274],[4.945338924343612,47.16602490244031],[4.945338208389436,47.1660536997972],[4.945686893469573,47.16604092365441],[4.945855435241136,47.16607163140415],[4.94586976202307,47.16636186508288],[4.944594901685478,47.16646288018367]]]]}}]};
+const PROPERTY_PARCELLE = "label"; // Champ utilisé comme nom de parcelle dans le GeoJSON
+const CATEGORIES = [{"id": "Morts_Manquants", "name": "Morts/Manquants", "color": "#111827"}, {"id": "Complants", "name": "Complants", "color": "#dc2626"}, {"id": "Complants_morts", "name": "Complants morts", "color": "#ea580c"}, {"id": "Jeunes", "name": "Jeunes", "color": "#15803d"}, {"id": "Court_noue", "name": "Court-noué", "color": "#2563eb"}];
+const STORAGE_KEY = "comptage_vigne_gps_observations_label_Eugenie_v1";
+const DRAFT_KEY = "comptage_vigne_gps_draft_label_Eugenie_v1";
+
+let map, allParcelsLayer, selectedParcelLayer, observationsLayer, gpsMarker;
+let selectedFeature = null;
+let lastGps = null;
+let gpsWatchId = null;
+let observations = loadObservations();
+let counts = Object.fromEntries(CATEGORIES.map(c => [c.id, 0]));
+
+function getParcelName(feature) {
+  return feature && feature.properties ? String(feature.properties[PROPERTY_PARCELLE] ?? "") : "";
+}
+
+function getSurface(feature) {
+  if (!feature || !feature.properties) return "";
+  return feature.properties.Surface ?? feature.properties.surface ?? "";
+}
+
+function init() {
+  populateParcelles();
+  buildCounters();
+  initMap();
+  loadDraft();
+  updateSelectedParcel();
+  recomputeCounts();
+  renderObservations();
+  bindInputs();
+}
+
+function populateParcelles() {
+  const select = document.getElementById("parcelle");
+  const features = PARCELLAIRE.features
+    .filter(f => getParcelName(f))
+    .sort((a,b) => getParcelName(a).localeCompare(getParcelName(b), "fr", { numeric:true }));
+  select.innerHTML = features.map(f => {
+    const n = getParcelName(f);
+    const surf = getSurface(f) !== "" && getSurface(f) != null ? " — " + Number(getSurface(f)).toFixed(2) + " ha" : "";
+    return `<option value="${escapeAttr(n)}">${escapeHtml(n)}${escapeHtml(surf)}</option>`;
+  }).join("");
+}
+
+function buildCounters() {
+  const checks = document.getElementById("checks");
+  const counters = document.getElementById("counters");
+  checks.innerHTML = CATEGORIES.map(c => `
+    <label class="check-item">
+      <input type="checkbox" checked onchange="toggleCounter('${c.id}', this.checked)">
+      <span><span class="dot" style="background:${c.color}"></span> ${escapeHtml(c.name)}</span>
+    </label>
+  `).join("");
+
+  counters.innerHTML = CATEGORIES.map(c => `
+    <div class="counter active" id="counter_${c.id}">
+      <div class="counter-title"><span class="dot" style="background:${c.color}"></span>${escapeHtml(c.name)}</div>
+      <div class="counter-row">
+        <button class="minus" type="button" onclick="minusObservation('${c.id}')">−</button>
+        <div class="value" id="value_${c.id}">0</div>
+        <button class="plus" type="button" onclick="addObservation('${c.id}')">+</button>
+      </div>
+    </div>
+  `).join("");
+}
+
+function initMap() {
+  map = L.map("map", { zoomControl: true });
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 21,
+    attribution: "&copy; OpenStreetMap"
+  }).addTo(map);
+
+  allParcelsLayer = L.geoJSON(PARCELLAIRE, {
+    style: { color:"#6b7280", weight:1, fillColor:"#9ca3af", fillOpacity:0.08 },
+    onEachFeature: (feature, layer) => {
+      layer.bindPopup(`<strong>Parcelle : ${escapeHtml(getParcelName(feature))}</strong><br>Label fichier : ${escapeHtml(feature.properties.labelFile || "")}<br>Polygone(s) regroupé(s) : ${escapeHtml(feature.properties.nb_polygones_sources || "")}`);
+    }
+  }).addTo(map);
+
+  selectedParcelLayer = L.geoJSON(null, {
+    style: { color:"#1d4ed8", weight:3, fillColor:"#60a5fa", fillOpacity:0.18 }
+  }).addTo(map);
+
+  observationsLayer = L.layerGroup().addTo(map);
+}
+
+function bindInputs() {
+  ["parcelle","rang","operateur","commentaire"].forEach(id => {
+    const el = document.getElementById(id);
+    el.addEventListener(id === "parcelle" ? "change" : "input", () => {
+      if (id === "parcelle") updateSelectedParcel();
+      saveDraft();
+      recomputeCounts();
+      renderObservations();
+    });
+  });
+  window.addEventListener("pagehide", saveDraft);
+}
+
+function updateSelectedParcel() {
+  const name = document.getElementById("parcelle").value;
+  selectedFeature = PARCELLAIRE.features.find(f => getParcelName(f) === name) || null;
+  selectedParcelLayer.clearLayers();
+  if (selectedFeature) {
+    selectedParcelLayer.addData(selectedFeature);
+    centerOnSelectedParcel();
+  }
+}
+
+function centerOnSelectedParcel() {
+  if (!selectedFeature) return;
+  const tmp = L.geoJSON(selectedFeature);
+  map.fitBounds(tmp.getBounds(), { padding:[20,20] });
+}
+
+function startGpsWatch() {
+  if (!navigator.geolocation) {
+    setGpsStatus("La géolocalisation n'est pas disponible sur ce navigateur.", "err");
+    return;
+  }
+  setGpsStatus("Recherche GPS en cours…", "warn");
+  if (gpsWatchId !== null) navigator.geolocation.clearWatch(gpsWatchId);
+  gpsWatchId = navigator.geolocation.watchPosition(pos => {
+    lastGps = {
+      lon: pos.coords.longitude,
+      lat: pos.coords.latitude,
+      accuracy: Math.round(pos.coords.accuracy),
+      timestamp: new Date().toISOString()
+    };
+    setGpsStatus(`GPS OK — précision ±${lastGps.accuracy} m — ${new Date().toLocaleTimeString("fr-FR")}`, lastGps.accuracy <= 15 ? "ok" : "warn");
+    updateGpsMarker();
+  }, err => {
+    setGpsStatus("GPS refusé ou indisponible. Sur iPhone : Réglages → Confidentialité et sécurité → Service de localisation → Safari → Autoriser. Détail : " + err.message, "err");
+  }, {
+    enableHighAccuracy: true,
+    maximumAge: 5000,
+    timeout: 10000
+  });
+}
+
+function updateGpsMarker() {
+  if (!lastGps) return;
+  const latlng = [lastGps.lat, lastGps.lon];
+  if (!gpsMarker) {
+    gpsMarker = L.circleMarker(latlng, { radius:7, color:"#111827", fillColor:"#22c55e", fillOpacity:0.9, weight:2 }).addTo(map);
+  } else {
+    gpsMarker.setLatLng(latlng);
+  }
+  gpsMarker.bindPopup(`Position téléphone<br>Précision ±${lastGps.accuracy} m`);
+}
+
+function setGpsStatus(msg, type) {
+  const el = document.getElementById("gpsStatus");
+  el.textContent = msg;
+  el.className = "status " + type;
+}
+
+function getCurrentGps() {
+  return new Promise(resolve => {
+    const now = Date.now();
+    if (lastGps && (now - Date.parse(lastGps.timestamp)) < 12000) {
+      resolve({ ok:true, gps:lastGps, source:"lastGps" });
+      return;
+    }
+    if (!navigator.geolocation) {
+      resolve({ ok:false, error:"GPS non disponible" });
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(pos => {
+      const gps = {
+        lon: pos.coords.longitude,
+        lat: pos.coords.latitude,
+        accuracy: Math.round(pos.coords.accuracy),
+        timestamp: new Date().toISOString()
+      };
+      lastGps = gps;
+      updateGpsMarker();
+      setGpsStatus(`GPS OK — précision ±${gps.accuracy} m`, gps.accuracy <= 15 ? "ok" : "warn");
+      resolve({ ok:true, gps, source:"instant" });
+    }, err => {
+      resolve({ ok:false, error:err.message });
+    }, {
+      enableHighAccuracy: true,
+      maximumAge: 5000,
+      timeout: 7000
+    });
+  });
+}
+
+async function addObservation(catId) {
+  const cat = CATEGORIES.find(c => c.id === catId);
+  if (!cat || !selectedFeature) return;
+  const now = getNowParts();
+  const gpsResult = await getCurrentGps();
+
+  let rawPoint, rawLat = "", rawLon = "", accuracy = "", gpsStatus = "ok";
+  if (gpsResult.ok) {
+    rawLon = gpsResult.gps.lon;
+    rawLat = gpsResult.gps.lat;
+    accuracy = gpsResult.gps.accuracy;
+    rawPoint = turf.point([rawLon, rawLat]);
+  } else {
+    gpsStatus = "erreur";
+    rawPoint = turf.centroid(selectedFeature);
+    rawLon = rawPoint.geometry.coordinates[0];
+    rawLat = rawPoint.geometry.coordinates[1];
+    accuracy = "";
+    setGpsStatus("GPS indisponible : point placé au centre de la parcelle.", "err");
+  }
+
+  const forced = forcePointIntoSelectedParcel(rawPoint, selectedFeature);
+  const p = forced.point.geometry.coordinates;
+  const obs = {
+    id: now.timestamp + "_" + Math.random().toString(16).slice(2),
+    timestamp: now.timestamp,
+    Date: now.dateISO,
+    Heure: now.heure,
+    Parcelle_selectionnee: document.getElementById("parcelle").value,
+    Rang_ou_secteur: document.getElementById("rang").value,
+    Operateur: document.getElementById("operateur").value,
+    Categorie: cat.name,
+    Categorie_id: cat.id,
+    Latitude_GPS_brute: rawLat,
+    Longitude_GPS_brute: rawLon,
+    Latitude_corrigee: p[1],
+    Longitude_corrigee: p[0],
+    Precision_GPS_m: accuracy,
+    Correction_appliquee: forced.corrected ? "oui" : "non",
+    Distance_correction_m: Math.round(forced.distance_m || 0),
+    Statut_GPS: gpsStatus,
+    Commentaire: document.getElementById("commentaire").value
+  };
+
+  if (accuracy !== "" && Number(accuracy) > 30) {
+    setGpsStatus(`Précision GPS faible : ±${accuracy} m. Le point est quand même enregistré.`, "warn");
+  }
+
+  observations.push(obs);
+  saveObservations();
+  recomputeCounts();
+  renderObservations();
+  addObservationMarker(obs, true);
+
+  if (forced.corrected && forced.distance_m > 50) {
+    setGpsStatus(`Point forcé dans la parcelle, mais GPS éloigné d’environ ${Math.round(forced.distance_m)} m. Vérifie la parcelle sélectionnée.`, "warn");
+  }
+}
+
+function forcePointIntoSelectedParcel(point, feature) {
+  try {
+    if (turf.booleanPointInPolygon(point, feature, { ignoreBoundary:false })) {
+      return { point, corrected:false, distance_m:0 };
+    }
+    const line = turf.polygonToLine(feature);
+    const nearest = turf.nearestPointOnLine(line, point, { units:"meters" });
+    let correctedPoint = nearest;
+    const centroid = turf.centroid(feature);
+    // Petit décalage vers le centroïde pour éviter que le point reste techniquement hors polygone.
+    const nc = nearest.geometry.coordinates;
+    const cc = centroid.geometry.coordinates;
+    const nudged = [nc[0] + (cc[0] - nc[0]) * 0.0005, nc[1] + (cc[1] - nc[1]) * 0.0005];
+    const nudgedPoint = turf.point(nudged);
+    if (turf.booleanPointInPolygon(nudgedPoint, feature, { ignoreBoundary:false })) correctedPoint = nudgedPoint;
+    return { point: correctedPoint, corrected:true, distance_m: turf.distance(point, correctedPoint, { units:"meters" }) };
+  } catch(e) {
+    console.warn(e);
+    const c = turf.centroid(feature);
+    return { point:c, corrected:true, distance_m:0 };
+  }
+}
+
+function minusObservation(catId) {
+  const parcelle = document.getElementById("parcelle").value;
+  for (let i = observations.length - 1; i >= 0; i--) {
+    if (observations[i].Parcelle_selectionnee === parcelle && observations[i].Categorie_id === catId) {
+      observations.splice(i, 1);
+      saveObservations();
+      recomputeCounts();
+      renderObservations();
+      return;
+    }
+  }
+  alert("Aucun point à supprimer pour cette catégorie sur la parcelle sélectionnée.");
+}
+
+function deleteLastObservation() {
+  if (observations.length === 0) return alert("Aucune observation.");
+  const last = observations[observations.length - 1];
+  if (!confirm("Supprimer le dernier point : " + last.Categorie + " / " + last.Parcelle_selectionnee + " ?")) return;
+  observations.pop();
+  saveObservations();
+  recomputeCounts();
+  renderObservations();
+}
+
+function resetCurrentParcel() {
+  const parcelle = document.getElementById("parcelle").value;
+  const n = observations.filter(o => o.Parcelle_selectionnee === parcelle).length;
+  if (n === 0) return alert("Aucun point sur cette parcelle.");
+  if (!confirm("Supprimer les " + n + " point(s) de la parcelle " + parcelle + " ?")) return;
+  observations = observations.filter(o => o.Parcelle_selectionnee !== parcelle);
+  saveObservations();
+  recomputeCounts();
+  renderObservations();
+}
+
+function clearAllObservations() {
+  if (observations.length === 0) return alert("Aucune observation.");
+  if (!confirm("Effacer définitivement tous les points enregistrés sur cet appareil ?")) return;
+  observations = [];
+  saveObservations();
+  recomputeCounts();
+  renderObservations();
+}
+
+function recomputeCounts() {
+  const parcelle = document.getElementById("parcelle").value;
+  counts = Object.fromEntries(CATEGORIES.map(c => [c.id, 0]));
+  observations.filter(o => o.Parcelle_selectionnee === parcelle).forEach(o => {
+    if (counts[o.Categorie_id] != null) counts[o.Categorie_id] += 1;
+  });
+  CATEGORIES.forEach(c => {
+    const el = document.getElementById("value_" + c.id);
+    if (el) el.textContent = counts[c.id] || 0;
+  });
+}
+
+function renderObservations() {
+  observationsLayer.clearLayers();
+  observations.forEach(o => addObservationMarker(o, false));
+
+  const summary = document.getElementById("savedSummary");
+  const list = document.getElementById("savedList");
+  const parcelle = document.getElementById("parcelle").value;
+  const obsParcelle = observations.filter(o => o.Parcelle_selectionnee === parcelle);
+  summary.textContent = `${observations.length} point(s) au total — ${obsParcelle.length} sur la parcelle sélectionnée.`;
+
+  const recent = observations.slice(-14).reverse();
+  list.innerHTML = recent.map(o => `
+    <div class="saved-item">
+      <strong>${escapeHtml(o.Categorie)}</strong> — ${escapeHtml(o.Parcelle_selectionnee)}<br>
+      ${escapeHtml(o.Date)} ${escapeHtml(o.Heure)} — ${escapeHtml(o.Rang_ou_secteur || "sans rang/secteur")}<br>
+      GPS ±${escapeHtml(o.Precision_GPS_m || "NA")} m — correction : ${escapeHtml(o.Correction_appliquee)}
+    </div>
+  `).join("");
+}
+
+function addObservationMarker(o, pan) {
+  const cat = CATEGORIES.find(c => c.id === o.Categorie_id) || CATEGORIES[0];
+  const marker = L.circleMarker([Number(o.Latitude_corrigee), Number(o.Longitude_corrigee)], {
+    radius: 7,
+    color: "#111827",
+    weight: 1,
+    fillColor: cat.color,
+    fillOpacity: 0.9
+  });
+  marker.bindPopup(`
+    <strong>${escapeHtml(o.Categorie)}</strong><br>
+    Parcelle : ${escapeHtml(o.Parcelle_selectionnee)}<br>
+    Rang/secteur : ${escapeHtml(o.Rang_ou_secteur || "")}<br>
+    GPS ±${escapeHtml(o.Precision_GPS_m || "NA")} m<br>
+    Correction : ${escapeHtml(o.Correction_appliquee)} (${escapeHtml(o.Distance_correction_m)} m)
+  `);
+  observationsLayer.addLayer(marker);
+  if (pan) map.panTo(marker.getLatLng());
+}
+
+function toggleCounter(id, visible) {
+  const el = document.getElementById("counter_" + id);
+  if (!el) return;
+  el.style.display = visible ? "block" : "none";
+}
+
+function showAllCounters() {
+  document.querySelectorAll(".check-item input").forEach(cb => cb.checked = true);
+  CATEGORIES.forEach(c => toggleCounter(c.id, true));
+}
+
+function exportCSV() {
+  if (observations.length === 0) return alert("Aucune observation à exporter.");
+  const headers = ["Date","Heure","timestamp","Parcelle_selectionnee","Rang_ou_secteur","Operateur","Categorie","Latitude_GPS_brute","Longitude_GPS_brute","Latitude_corrigee","Longitude_corrigee","Precision_GPS_m","Correction_appliquee","Distance_correction_m","Statut_GPS","Commentaire"];
+  const rows = observations.map(o => headers.map(h => o[h] ?? ""));
+  downloadText("comptage_vigne_points_" + today() + ".csv", toCSV(headers, rows), "text/csv;charset=utf-8;");
+}
+
+function exportSummaryCSV() {
+  if (observations.length === 0) return alert("Aucune observation à exporter.");
+  const byKey = {};
+  observations.forEach(o => {
+    const key = o.Parcelle_selectionnee + "||" + (o.Rang_ou_secteur || "");
+    if (!byKey[key]) {
+      byKey[key] = { Parcelle:o.Parcelle_selectionnee, Rang_ou_secteur:o.Rang_ou_secteur || "" };
+      CATEGORIES.forEach(c => byKey[key][c.name] = 0);
+    }
+    byKey[key][o.Categorie] = (byKey[key][o.Categorie] || 0) + 1;
+  });
+  const headers = ["Parcelle","Rang_ou_secteur", ...CATEGORIES.map(c => c.name), "Total"];
+  const rows = Object.values(byKey).map(r => {
+    const total = CATEGORIES.reduce((s,c) => s + Number(r[c.name] || 0), 0);
+    return [r.Parcelle, r.Rang_ou_secteur, ...CATEGORIES.map(c => r[c.name] || 0), total];
+  });
+  downloadText("comptage_vigne_synthese_" + today() + ".csv", toCSV(headers, rows), "text/csv;charset=utf-8;");
+}
+
+function exportGeoJSON() {
+  if (observations.length === 0) return alert("Aucune observation à exporter.");
+  const fc = {
+    type:"FeatureCollection",
+    name:"observations_comptage_vigne",
+    crs: { type:"name", properties:{ name:"EPSG:4326" } },
+    features: observations.map(o => ({
+      type:"Feature",
+      properties: { ...o },
+      geometry: { type:"Point", coordinates:[Number(o.Longitude_corrigee), Number(o.Latitude_corrigee)] }
+    }))
+  };
+  downloadText("comptage_vigne_points_" + today() + ".geojson", JSON.stringify(fc, null, 2), "application/geo+json;charset=utf-8;");
+}
+
+function toCSV(headers, rows) {
+  const csv = headers.map(csvEscape).join(";") + "\n" + rows.map(row => row.map(csvEscape).join(";")).join("\n") + "\n";
+  return "\ufeff" + csv;
+}
+
+function csvEscape(v) {
+  const s = String(v ?? "");
+  return '"' + s.replace(/"/g, '""') + '"';
+}
+
+function downloadText(filename, content, type) {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function loadObservations() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]"); }
+  catch(e) { return []; }
+}
+
+function saveObservations() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(observations));
+  saveDraft();
+}
+
+function saveDraft() {
+  const draft = {
+    parcelle: document.getElementById("parcelle")?.value || "",
+    rang: document.getElementById("rang")?.value || "",
+    operateur: document.getElementById("operateur")?.value || "",
+    commentaire: document.getElementById("commentaire")?.value || "",
+    savedAt: new Date().toISOString()
+  };
+  localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+}
+
+function loadDraft() {
+  try {
+    const draft = JSON.parse(localStorage.getItem(DRAFT_KEY) || "null");
+    if (!draft) return;
+    if (draft.parcelle && [...document.getElementById("parcelle").options].some(o => o.value === draft.parcelle)) {
+      document.getElementById("parcelle").value = draft.parcelle;
+    }
+    document.getElementById("rang").value = draft.rang || "";
+    document.getElementById("operateur").value = draft.operateur || "";
+    document.getElementById("commentaire").value = draft.commentaire || "";
+  } catch(e) {}
+}
+
+function getNowParts() {
+  const now = new Date();
+  return {
+    dateISO: now.toISOString().slice(0,10),
+    heure: now.toTimeString().slice(0,8),
+    timestamp: now.toISOString()
+  };
+}
+
+function today() {
+  return new Date().toISOString().slice(0,10);
+}
+
+function escapeHtml(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;").replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function escapeAttr(s) {
+  return escapeHtml(s).replace(/`/g, "&#096;");
+}
+
+init();
+</script>
+</body>
+</html>
